@@ -1,0 +1,25 @@
+[package]
+name = "malprobe"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+axum.workspace = true
+config.workspace = true
+dotenvy.workspace = true
+log.workspace = true
+mimalloc.workspace = true
+sea-orm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tap.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true
+utoipa-axum.workspace = true
+utoipa-scalar.workspace = true
+utoipa.workspace = true
+
+malprobe-common.workspace = true
+migration.workspace = true

@@ -1,0 +1,12 @@
+# Static base settings for malprobe.
+# Environment-specific values (e.g. database DSN) are provided via MALPROBE_*
+# env vars (see .env). Environment variables take precedence over this file.
+
+addr = "0.0.0.0:8000"
+
+[database]
+# dsn comes from the MALPROBE_DATABASE_DSN env var (see .env)
+slow_statements_logging_threshold = 5000
+max_connections = 32
+min_connections = 4
+migrate = true
