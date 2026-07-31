@@ -8,15 +8,19 @@ use uuid::Uuid;
 use crate::helper::SafeTransactionConnectionTrait;
 use crate::model::{files, prelude::Files, sea_orm_active_enums::FileStatus};
 
-/// pgmq queue scan tasks are enqueued into (matches the worker default).
+/// pgmq queue download tasks are enqueued into by the backend; the worker
+/// downloads the file bytes and enqueues a scan task afterwards.
+pub const DOWNLOAD_QUEUE: &str = "download";
+
+/// pgmq queue scan tasks are enqueued into by the download worker.
 pub const SCAN_QUEUE: &str = "scan";
 
 #[async_trait::async_trait]
 pub trait FileHelper {
-    /// Insert a pending `files` row and enqueue its scan task atomically.
+    /// Insert a pending `files` row and enqueue its download task atomically.
     ///
     /// The `files` row and the pgmq message are committed in one transaction,
-    /// so a failure cannot leave an orphaned pending row without a scan task.
+    /// so a failure cannot leave an orphaned pending row without a download task.
     async fn create_pending_file(
         id: impl Into<Uuid> + Send,
         source_url: impl Into<String> + Send,
@@ -48,7 +52,7 @@ pub trait FileHelper {
             DatabaseBackend::Postgres,
             "SELECT pgmq.send($1, $2::jsonb)",
             vec![
-                Value::String(Some(Box::new(SCAN_QUEUE.to_owned()))),
+                Value::String(Some(Box::new(DOWNLOAD_QUEUE.to_owned()))),
                 Value::Json(Some(Box::new(
                     serde_json::to_value(ScanTask { file_id: id }).map_err(|e| {
                         Error::Unknown(format!("failed to serialize scan task: {e}"))
@@ -86,6 +90,42 @@ pub trait FileHelper {
                 vec![Value::String(Some(Box::new(SCAN_QUEUE.to_owned())))],
             ))
             .await?;
+        Ok(())
+    }
+
+    /// Make sure the download queue exists. See [`Self::ensure_scan_queue`].
+    async fn ensure_download_queue(
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<(), Error> {
+        database
+            .execute(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "SELECT pgmq.create($1)",
+                vec![Value::String(Some(Box::new(DOWNLOAD_QUEUE.to_owned())))],
+            ))
+            .await?;
+        Ok(())
+    }
+
+    /// Backfill the metadata the downloader learned about the file bytes.
+    /// The status stays `pending`; the scan worker moves it to `scanning`.
+    async fn mark_downloaded(
+        id: impl Into<Uuid> + Send,
+        sha256: impl Into<String> + Send,
+        size: impl Into<i64> + Send,
+        mime_type: Option<String>,
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<(), Error> {
+        let id = id.into();
+        files::ActiveModel {
+            id: Set(id),
+            sha256: Set(Some(sha256.into())),
+            size: Set(Some(size.into())),
+            mime_type: Set(mime_type),
+            ..Default::default()
+        }
+        .update(database)
+        .await?;
         Ok(())
     }
 }

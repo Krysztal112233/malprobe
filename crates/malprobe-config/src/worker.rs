@@ -17,6 +17,12 @@ pub struct WorkerSection {
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
 
+    #[serde(default = "default_download_queue_name")]
+    pub download_queue_name: String,
+
+    #[serde(default = "default_download_concurrency")]
+    pub download_concurrency: u32,
+
     #[serde(default = "default_vt_seconds")]
     pub vt_seconds: u64,
 
@@ -32,6 +38,14 @@ fn default_queue_name() -> String {
 }
 
 fn default_concurrency() -> u32 {
+    2
+}
+
+fn default_download_queue_name() -> String {
+    "download".to_owned()
+}
+
+fn default_download_concurrency() -> u32 {
     2
 }
 

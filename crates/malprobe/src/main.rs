@@ -34,9 +34,12 @@ async fn main() -> Result<(), Error> {
             .await
             .inspect_err(|e| error!("{e}"))?;
 
-        // `pgmq.create` is idempotent; the backend must ensure the queue exists
+        // `pgmq.create` is idempotent; the backend must ensure the queues exist
         // because it can run before any worker started.
         Files::ensure_scan_queue(&database)
+            .await
+            .inspect_err(|e| error!("{e}"))?;
+        Files::ensure_download_queue(&database)
             .await
             .inspect_err(|e| error!("{e}"))?;
 
