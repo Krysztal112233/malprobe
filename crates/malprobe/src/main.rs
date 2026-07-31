@@ -11,12 +11,13 @@ use tower_http::trace::TraceLayer;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::{Scalar, Servable};
 
-use crate::{config::DatabaseConfig, state::AppState};
+use malprobe_config::{BackendConfig, DatabaseConfig};
+
+use crate::state::AppState;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-mod config;
 mod endpoints;
 mod state;
 
@@ -28,7 +29,7 @@ async fn main() -> Result<(), Error> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let config = dbg!(config::BackendConfig::new().inspect_err(|e| error!("{e}"))?);
+    let config = dbg!(BackendConfig::load().inspect_err(|e| error!("{e}"))?);
 
     let states = {
         let database = setup_database(&config.database)
