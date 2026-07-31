@@ -24,6 +24,18 @@ COPY --from=backend-builder /builder/target/release/malprobe-worker /app/
 COPY malprobe.toml /app/
 CMD [ "./malprobe-worker" ]
 
+FROM docker.io/library/debian:trixie-slim AS migration
+WORKDIR /app
+RUN apt-get update && \
+    apt-get install -y ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=backend-builder /builder/target/release/migration /app/
+# Runs all pending migrations against DATABASE_URL and exits.
+# compose starts it once (restart: "no") and gates the backend/worker
+# on `service_completed_successfully`.
+CMD [ "./migration" ]
+
 # Prebaked ClamAV image based on ghcr.io/extremeshok/clamav-unofficial-sigs.
 # Official ClamAV databases (freshclam) and unofficial signature databases
 # (clamav-unofficial-sigs: Sanesecurity, URLhaus, Linux Malware Detect, ...)

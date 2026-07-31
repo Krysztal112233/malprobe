@@ -11,6 +11,26 @@ services:
       - .env
     ports:
       - 5432:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend-migration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migration
+    image: ghcr.io/krysztal112233/malprobe-migration:latest
+    # Runs the pending migrations once, then exits; the backend/worker only
+    # start after it completes successfully.
+    restart: "no"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   clamav:
     build:
@@ -36,8 +56,10 @@ services:
     ports:
       - 8000:8000
     depends_on:
+      backend-migration:
+        condition: service_completed_successfully
       postgres:
-        condition: service_started
+        condition: service_healthy
 
   worker:
     build:
@@ -49,8 +71,10 @@ services:
     env_file:
       - .env
     depends_on:
+      backend-migration:
+        condition: service_completed_successfully
       postgres:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   postgres-data:

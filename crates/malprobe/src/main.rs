@@ -2,7 +2,6 @@ use axum::Router;
 use log::error;
 use malprobe_common::error::Error;
 use malprobe_config::BackendConfig;
-use migration::{Migrator, MigratorTrait};
 use mimalloc::MiMalloc;
 use tower_http::trace::TraceLayer;
 use utoipa_axum::router::OpenApiRouter;
@@ -27,13 +26,11 @@ async fn main() -> Result<(), Error> {
     let config = dbg!(BackendConfig::load().inspect_err(|e| error!("{e}"))?);
 
     let states = {
+        // Migrations are run by the dedicated migration container (see compose.yml
+        // `backend-migration`), never at backend startup.
         let database = malprobe_database::setup::connect(&config.database)
             .await
             .inspect_err(|e| error!("{e}"))?;
-
-        if config.database.migrate {
-            Migrator::up(&database, None).await?;
-        }
 
         AppState {
             database,

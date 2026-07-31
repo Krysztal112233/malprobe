@@ -24,4 +24,3 @@ malprobe-common.workspace = true
 malprobe-config.workspace = true
 malprobe-database.workspace = true
 malprobe-vo.workspace = true
-migration.workspace = true
