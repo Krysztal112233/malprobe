@@ -10,11 +10,24 @@ services:
     ports:
       - 5432:5432
 
-  backend:
+  clamav:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: clamav
+    image: ghcr.io/krysztal112233/malprobe-clamav:latest
+    restart: unless-stopped
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "true"
+    ports:
+      - "3310:3310"
+
+  malprobe:
     build:
       context: .
       dockerfile: Dockerfile
       target: backend
+    image: ghcr.io/krysztal112233/malprobe:latest
     restart: unless-stopped
     env_file:
       - .env
