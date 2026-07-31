@@ -2,17 +2,14 @@ use axum::Router;
 use log::error;
 use malprobe_common::error::Error;
 use malprobe_config::BackendConfig;
+use malprobe_database::helper::files::FileHelper;
+use malprobe_database::model::prelude::Files;
 use mimalloc::MiMalloc;
-use sea_orm::ConnectionTrait;
 use tower_http::trace::TraceLayer;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::{Scalar, Servable};
 
 use crate::state::AppState;
-
-/// pgmq queue scan tasks are enqueued into (must match the worker's
-/// `queue_name`, which defaults to "scan").
-pub const SCAN_QUEUE: &str = "scan";
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -39,10 +36,9 @@ async fn main() -> Result<(), Error> {
 
         // `pgmq.create` is idempotent; the backend must ensure the queue exists
         // because it can run before any worker started.
-        database
-            .execute_unprepared(&format!("SELECT pgmq.create('{SCAN_QUEUE}')"))
+        Files::ensure_scan_queue(&database)
             .await
-            .map_err(|e| Error::Unknown(format!("failed to create scan queue: {e}")))?;
+            .inspect_err(|e| error!("{e}"))?;
 
         AppState { database }
     };

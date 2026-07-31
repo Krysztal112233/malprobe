@@ -1400,10 +1400,12 @@ dependencies = [
 name = "malprobe-database"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "log",
  "malprobe-common",
  "malprobe-config",
+ "malprobe-vo",
  "sea-orm",
  "serde",
  "serde_json",

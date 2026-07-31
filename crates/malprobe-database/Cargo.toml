@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 chrono.workspace = true
 log.workspace = true
 sea-orm.workspace = true
@@ -16,3 +17,4 @@ uuid.workspace = true
 
 malprobe-common.workspace = true
 malprobe-config.workspace = true
+malprobe-vo.workspace = true
