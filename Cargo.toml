@@ -1,5 +1,5 @@
 [workspace]
-members = ["./crates/malprobe", "./crates/migration/", "crates/malprobe-common", "crates/malprobe-vo", "crates/malprobe-config", "crates/malprobe-worker"]
+members = ["./crates/malprobe", "./crates/migration/", "crates/malprobe-common", "crates/malprobe-vo", "crates/malprobe-config", "crates/malprobe-worker", "crates/malprobe-database"]
 resolver = "3"
 
 [workspace.package]
@@ -18,6 +18,7 @@ log = "0.4.33"
 mimalloc = "0.1.52"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+strum = { version = "0.28", features = ["derive"] }
 tap = "1.0.1"
 thiserror = "2.0.18"
 tokio = { version = "1.53.0", features = ["full"] }
@@ -32,6 +33,7 @@ uuid = { version = "1.24.0", features = ["v7"] }
 
 malprobe-common = { path = "./crates/malprobe-common/" }
 malprobe-config = { path = "./crates/malprobe-config/" }
+malprobe-database = { path = "./crates/malprobe-database/" }
 malprobe-vo = { path = "./crates/malprobe-vo/" }
 migration = { path = "./crates/migration/" }
 
