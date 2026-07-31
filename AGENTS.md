@@ -17,10 +17,12 @@ POST /files → store file → INSERT files(pending) → pgmq.send("scan")
 
 ## Rules
 
-- **Migrations**: generate with the SeaORM CLI (`cargo run -p migration -- generate <name>`),
-  never hand-write. Raw SQL goes in `<migration>/up.sql` + `down.sql`, embedded via `include_str!`.
-  Directory-style migrations must `impl MigrationName` manually — `DeriveMigrationName`
-  derives from the file stem, which is `"mod"` inside a directory.
+- **Migrations**: generate with the SeaORM CLI (`sea-orm-cli migrate generate <name>`),
+  never hand-write. Layout matches oceaniam: the migration module is a flat file at
+  `crates/migration/src/m<timestamp>_<name>.rs` with `#[derive(DeriveMigrationName)]`
+  (file stem == migration name); its SQL lives in the sibling directory
+  `m<timestamp>_<name>/up.sql` + `down.sql`, embedded via
+  `include_str!("./<name>/up.sql")`.
 - **Config**: define config types only in `malprobe-config`; never redefine in service crates.
 - **pgmq**: keep the crate at 0.33.x (sqlx 0.8, shares the sea-orm pool via
   `get_postgres_connection_pool`). 0.34-alpha uses sqlx 0.9 — do not use.
@@ -39,6 +41,6 @@ POST /files → store file → INSERT files(pending) → pgmq.send("scan")
 
 ```bash
 cargo build --workspace
-cargo run -p migration -- generate <name>   # needs DATABASE_URL env
+cargo run -p migration -- generate <name>   # needs DATABASE_URL env, or: sea-orm-cli migrate generate <name>
 docker compose up -d --build
 ```

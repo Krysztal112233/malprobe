@@ -1,21 +1,16 @@
 use sea_orm_migration::prelude::*;
 
+#[derive(DeriveMigrationName)]
 pub struct Migration;
-
-// `DeriveMigrationName` derives the name from the file stem, which is "mod" for
-// directory-style migrations, so the name is implemented manually instead.
-impl MigrationName for Migration {
-    fn name(&self) -> &str {
-        "m20260731_095839_enable_pgmq_extension"
-    }
-}
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .get_connection()
-            .execute_unprepared(include_str!("up.sql"))
+            .execute_unprepared(include_str!(
+                "./m20260731_181656_alter_files_for_url_sources/up.sql"
+            ))
             .await?;
         Ok(())
     }
@@ -23,7 +18,9 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .get_connection()
-            .execute_unprepared(include_str!("down.sql"))
+            .execute_unprepared(include_str!(
+                "./m20260731_181656_alter_files_for_url_sources/down.sql"
+            ))
             .await?;
         Ok(())
     }
