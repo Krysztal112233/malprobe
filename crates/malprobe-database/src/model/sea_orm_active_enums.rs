@@ -16,6 +16,26 @@ use serde::{Deserialize, Serialize};
     strum :: Display,
     strum :: EnumString,
 )]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "file_source_type")]
+pub enum FileSourceType {
+    #[sea_orm(string_value = "url")]
+    Url,
+    #[sea_orm(string_value = "upload")]
+    Upload,
+}
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    Hash,
+    strum :: Display,
+    strum :: EnumString,
+)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "file_status")]
 pub enum FileStatus {
     #[sea_orm(string_value = "pending")]

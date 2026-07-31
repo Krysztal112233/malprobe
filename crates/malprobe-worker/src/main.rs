@@ -234,9 +234,10 @@ async fn process_download(
         return Err(format!("file {file_id} not found"));
     };
 
-    let response = reqwest::get(&model.source_url)
+    let source = model.source.ok_or("file has no download source")?;
+    let response = reqwest::get(&source)
         .await
-        .map_err(|e| format!("failed to download {}: {e}", model.source_url))?;
+        .map_err(|e| format!("failed to download {source}: {e}"))?;
     let bytes = response
         .bytes()
         .await

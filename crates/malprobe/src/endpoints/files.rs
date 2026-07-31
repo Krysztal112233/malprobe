@@ -29,7 +29,13 @@ pub async fn upload(
 ) -> RestResult<FileVO> {
     let id = Uuid::now_v7();
 
-    let inserted = Files::create_pending_file(id, request.url, &state.database).await?;
+    let inserted = Files::create_pending_file(
+        id,
+        sea_orm_active_enums::FileSourceType::Url,
+        request.url,
+        &state.database,
+    )
+    .await?;
 
     Ok(Json(ApiResponse::new(to_vo(inserted))))
 }

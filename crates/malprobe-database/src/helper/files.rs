@@ -6,7 +6,11 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::helper::SafeTransactionConnectionTrait;
-use crate::model::{files, prelude::Files, sea_orm_active_enums::FileStatus};
+use crate::model::{
+    files,
+    prelude::Files,
+    sea_orm_active_enums::{FileSourceType, FileStatus},
+};
 
 /// pgmq queue download tasks are enqueued into by the backend; the worker
 /// downloads the file bytes and enqueues a scan task afterwards.
@@ -27,7 +31,8 @@ pub trait FileHelper {
     /// so a failure cannot leave an orphaned pending row without a download task.
     async fn create_pending_file(
         id: impl Into<Uuid> + Send,
-        source_url: impl Into<String> + Send,
+        source_type: FileSourceType,
+        source: impl Into<String> + Send,
         database: &impl SafeTransactionConnectionTrait,
     ) -> Result<files::Model, Error> {
         let id = id.into();
@@ -38,7 +43,8 @@ pub trait FileHelper {
             sha256: Set(None),
             size: Set(None),
             mime_type: Set(None),
-            source_url: Set(source_url.into()),
+            source: Set(Some(source.into())),
+            source_type: Set(source_type),
             status: Set(FileStatus::Pending),
             verdict: Set(None),
             malware_name: Set(None),
