@@ -14,6 +14,16 @@ COPY --from=backend-builder /builder/target/release/malprobe /app/
 COPY malprobe.toml /app/
 CMD [ "./malprobe" ]
 
+FROM docker.io/library/debian:trixie-slim AS worker
+WORKDIR /app
+RUN apt-get update && \
+    apt-get install -y ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=backend-builder /builder/target/release/malprobe-worker /app/
+COPY malprobe.toml /app/
+CMD [ "./malprobe-worker" ]
+
 # Prebaked ClamAV image based on ghcr.io/extremeshok/clamav-unofficial-sigs.
 # Official ClamAV databases (freshclam) and unofficial signature databases
 # (clamav-unofficial-sigs: Sanesecurity, URLhaus, Linux Malware Detect, ...)

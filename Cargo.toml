@@ -1,5 +1,5 @@
 [workspace]
-members = ["./crates/malprobe", "./crates/migration/", "crates/malprobe-common", "crates/malprobe-vo", "crates/malprobe-config"]
+members = ["./crates/malprobe", "./crates/migration/", "crates/malprobe-common", "crates/malprobe-vo", "crates/malprobe-config", "crates/malprobe-worker"]
 resolver = "3"
 
 [workspace.package]
@@ -34,6 +34,9 @@ malprobe-common = { path = "./crates/malprobe-common/" }
 malprobe-config = { path = "./crates/malprobe-config/" }
 malprobe-vo = { path = "./crates/malprobe-vo/" }
 migration = { path = "./crates/migration/" }
+
+# Postgres message queue (pgmq-rs 0.33.x tracks sqlx 0.8, matching sea-orm)
+pgmq = "0.33.7"
 
 
 

@@ -10,3 +10,12 @@ slow_statements_logging_threshold = 5000
 max_connections = 32
 min_connections = 4
 migrate = true
+
+[worker]
+# Shared by the backend (enqueue) and the worker (consume) via pgmq.
+queue_name = "scan"
+# Worker-only settings (the backend ignores the unknown section).
+concurrency = 2
+vt_seconds = 300
+poll_timeout_ms = 5000
+poll_interval_ms = 500

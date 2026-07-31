@@ -1,0 +1,14 @@
+[package]
+name = "malprobe-worker"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dotenvy = { workspace = true }
+malprobe-config = { workspace = true }
+pgmq = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
