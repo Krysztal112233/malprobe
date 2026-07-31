@@ -1,0 +1,11 @@
+[package]
+name = "malprobe-vo"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+utoipa.workspace = true
+uuid.workspace = true

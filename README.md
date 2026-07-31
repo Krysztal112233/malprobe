@@ -15,7 +15,8 @@ Malprobe provides file upload and scanning capabilities, helping users quickly d
 ## Workspace Structure
 
 - `crates/malprobe` — main backend service (API entrypoint)
-- `crates/malprobe-common` — shared code such as common types and error handling
+- `crates/malprobe-common` — shared error handling
+- `crates/malprobe-vo` — pure response value objects (VOs)
 - `crates/migration` — database migrations
 
 ## Running
@@ -24,4 +25,4 @@ Malprobe provides file upload and scanning capabilities, helping users quickly d
 docker compose up -d --build
 ```
 
-The service listens on port `8000` by default and is configured via `config.toml`.
+The service listens on port `8000` by default and is configured via `malprobe.toml`.

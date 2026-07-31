@@ -22,4 +22,5 @@ utoipa-scalar.workspace = true
 utoipa.workspace = true
 
 malprobe-common.workspace = true
+malprobe-vo.workspace = true
 migration.workspace = true
