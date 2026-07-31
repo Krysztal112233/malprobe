@@ -26,6 +26,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Create .env for compose parsing
+        run: touch .env
+
       - name: Build and push compose images
         uses: docker/bake-action@v7
         with:
