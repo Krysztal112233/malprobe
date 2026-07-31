@@ -6,9 +6,9 @@ use malprobe_database::helper::files::FileHelper;
 use malprobe_database::model::prelude::Files;
 use malprobe_vo::ScanTask;
 use pgmq::{Message, errors::PgmqError, pg_ext::PGMQueueExt};
-use reqwest::header::CONTENT_TYPE;
 use sea_orm::DatabaseConnection;
 use sha2::Digest;
+use std::path::PathBuf;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -35,11 +35,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     create_queue_with_retry(&pgmq, &config.worker.queue_name).await?;
     create_queue_with_retry(&pgmq, &config.worker.download_queue_name).await?;
+    create_queue_with_retry(&pgmq, &config.worker.enrich_queue_name).await?;
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let mut handles = Vec::with_capacity(
-        (config.worker.concurrency + config.worker.download_concurrency) as usize,
+        (config.worker.concurrency
+            + config.worker.download_concurrency
+            + config.worker.enrich_concurrency) as usize,
     );
 
     // Scan workers: consume the scan queue and run the actual ClamAV scan.
@@ -53,13 +56,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }));
     }
 
-    // Download workers: consume the download queue, fetch the file bytes and
-    // enqueue a scan task once the metadata is backfilled.
+    // Download workers: consume the download queue, fetch the file bytes,
+    // persist them and fan out to the enrich and scan queues.
     for index in 0..config.worker.download_concurrency {
         let pgmq = pgmq.clone();
         let cfg = config.worker.clone();
         let database = database.clone();
         let queue_name = cfg.download_queue_name.clone();
+        let storage_root = cfg.storage_root.clone();
+        let enrich_queue = cfg.enrich_queue_name.clone();
         let scan_queue = cfg.queue_name.clone();
         let mut shutdown = shutdown_rx.clone();
         handles.push(tokio::spawn(async move {
@@ -71,8 +76,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 move |file_id| {
                     let database = database.clone();
                     let pgmq = pgmq.clone();
+                    let storage_root = storage_root.clone();
+                    let enrich_queue = enrich_queue.clone();
                     let scan_queue = scan_queue.clone();
-                    async move { process_download(&database, &pgmq, &scan_queue, file_id).await }
+                    async move {
+                        process_download(
+                            &database,
+                            &pgmq,
+                            &storage_root,
+                            &enrich_queue,
+                            &scan_queue,
+                            file_id,
+                        )
+                        .await
+                    }
+                },
+                &mut shutdown,
+            )
+            .await;
+        }));
+    }
+
+    // Enrich workers: consume the enrich queue, sniff the file type from the
+    // stored bytes and backfill the metadata.
+    for index in 0..config.worker.enrich_concurrency {
+        let pgmq = pgmq.clone();
+        let cfg = config.worker.clone();
+        let database = database.clone();
+        let queue_name = cfg.enrich_queue_name.clone();
+        let storage_root = cfg.storage_root.clone();
+        let mut shutdown = shutdown_rx.clone();
+        handles.push(tokio::spawn(async move {
+            worker_loop(
+                index,
+                pgmq,
+                queue_name,
+                &cfg,
+                move |file_id| {
+                    let database = database.clone();
+                    let storage_root = storage_root.clone();
+                    async move { process_enrich(&database, &storage_root, file_id).await }
                 },
                 &mut shutdown,
             )
@@ -174,11 +217,13 @@ async fn process_scan(file_id: Uuid) -> Result<(), String> {
     Ok(())
 }
 
-/// Download stage: fetch the file bytes from `source_url`, backfill the
-/// metadata and enqueue the scan task.
+/// Download stage: fetch the file bytes from `source_url`, persist them under
+/// `{storage_root}/{file_id}` and fan out to the enrich and scan queues.
 async fn process_download(
     database: &DatabaseConnection,
     pgmq: &PGMQueueExt,
+    storage_root: &str,
+    enrich_queue: &str,
     scan_queue: &str,
     file_id: Uuid,
 ) -> Result<(), String> {
@@ -192,26 +237,70 @@ async fn process_download(
     let response = reqwest::get(&model.source_url)
         .await
         .map_err(|e| format!("failed to download {}: {e}", model.source_url))?;
-    let mime_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
     let bytes = response
         .bytes()
         .await
         .map_err(|e| format!("failed to read response body: {e}"))?;
 
+    // Persist the bytes before acknowledging anything: the enrich and scan
+    // stages read the file from disk by file id. Write to a temp path and
+    // rename so a crash never leaves a half-written file behind.
+    let dir = PathBuf::from(storage_root);
+    let path = dir.join(file_id.to_string());
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("failed to create storage dir: {e}"))?;
+    let tmp = path.with_extension("tmp");
+    tokio::fs::write(&tmp, &bytes)
+        .await
+        .map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .map_err(|e| format!("failed to persist {}: {e}", path.display()))?;
+
     let sha256 = hex::encode(sha2::Sha256::digest(&bytes));
-    Files::mark_downloaded(file_id, sha256, bytes.len() as i64, mime_type, database)
+    Files::mark_downloaded(file_id, sha256, bytes.len() as i64, database)
         .await
         .map_err(|e| format!("failed to backfill metadata: {e}"))?;
 
+    // Enrich and scan run in parallel: both only read the persisted bytes and
+    // fail independently.
+    pgmq.send(enrich_queue, &ScanTask { file_id })
+        .await
+        .map_err(|e| format!("failed to enqueue enrich task: {e}"))?;
     pgmq.send(scan_queue, &ScanTask { file_id })
         .await
         .map_err(|e| format!("failed to enqueue scan task: {e}"))?;
 
-    info!(%file_id, size = bytes.len(), "file downloaded, scan task enqueued");
+    info!(%file_id, size = bytes.len(), "file downloaded, enrich and scan tasks enqueued");
+
+    Ok(())
+}
+
+/// Enrich stage: sniff the file type from the stored bytes and backfill the
+/// mime type. Runs in parallel with the scan stage and never touches the
+/// status, so a sniff failure (or an unknown type) does not block scanning.
+async fn process_enrich(
+    database: &DatabaseConnection,
+    storage_root: &str,
+    file_id: Uuid,
+) -> Result<(), String> {
+    let path = PathBuf::from(storage_root).join(file_id.to_string());
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+
+    match infer::get(&bytes) {
+        Some(info) => {
+            Files::mark_enriched(file_id, info.mime_type(), database)
+                .await
+                .map_err(|e| format!("failed to backfill mime type: {e}"))?;
+            info!(%file_id, mime = info.mime_type(), "file enriched");
+        }
+        None => {
+            info!(%file_id, "file type not recognized, skipping enrichment");
+        }
+    }
 
     Ok(())
 }

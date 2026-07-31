@@ -15,6 +15,10 @@ pub const DOWNLOAD_QUEUE: &str = "download";
 /// pgmq queue scan tasks are enqueued into by the download worker.
 pub const SCAN_QUEUE: &str = "scan";
 
+/// pgmq queue enrichment tasks are enqueued into by the download worker; the
+/// enrich stage sniffs the file type and backfills metadata.
+pub const ENRICH_QUEUE: &str = "enrich";
+
 #[async_trait::async_trait]
 pub trait FileHelper {
     /// Insert a pending `files` row and enqueue its download task atomically.
@@ -107,13 +111,26 @@ pub trait FileHelper {
         Ok(())
     }
 
+    /// Make sure the enrich queue exists. See [`Self::ensure_scan_queue`].
+    async fn ensure_enrich_queue(
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<(), Error> {
+        database
+            .execute(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "SELECT pgmq.create($1)",
+                vec![Value::String(Some(Box::new(ENRICH_QUEUE.to_owned())))],
+            ))
+            .await?;
+        Ok(())
+    }
+
     /// Backfill the metadata the downloader learned about the file bytes.
     /// The status stays `pending`; the scan worker moves it to `scanning`.
     async fn mark_downloaded(
         id: impl Into<Uuid> + Send,
         sha256: impl Into<String> + Send,
         size: impl Into<i64> + Send,
-        mime_type: Option<String>,
         database: &impl SafeTransactionConnectionTrait,
     ) -> Result<(), Error> {
         let id = id.into();
@@ -121,7 +138,22 @@ pub trait FileHelper {
             id: Set(id),
             sha256: Set(Some(sha256.into())),
             size: Set(Some(size.into())),
-            mime_type: Set(mime_type),
+            ..Default::default()
+        }
+        .update(database)
+        .await?;
+        Ok(())
+    }
+
+    /// Backfill the mime type sniffed from the file bytes by the enrich stage.
+    async fn mark_enriched(
+        id: impl Into<Uuid> + Send,
+        mime_type: impl Into<String> + Send,
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<(), Error> {
+        files::ActiveModel {
+            id: Set(id.into()),
+            mime_type: Set(Some(mime_type.into())),
             ..Default::default()
         }
         .update(database)

@@ -42,6 +42,9 @@ async fn main() -> Result<(), Error> {
         Files::ensure_download_queue(&database)
             .await
             .inspect_err(|e| error!("{e}"))?;
+        Files::ensure_enrich_queue(&database)
+            .await
+            .inspect_err(|e| error!("{e}"))?;
 
         AppState { database }
     };

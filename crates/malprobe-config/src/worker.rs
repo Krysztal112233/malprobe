@@ -23,6 +23,16 @@ pub struct WorkerSection {
     #[serde(default = "default_download_concurrency")]
     pub download_concurrency: u32,
 
+    #[serde(default = "default_enrich_queue_name")]
+    pub enrich_queue_name: String,
+
+    #[serde(default = "default_enrich_concurrency")]
+    pub enrich_concurrency: u32,
+
+    /// Directory where downloaded file bytes are stored, keyed by file id.
+    #[serde(default = "default_storage_root")]
+    pub storage_root: String,
+
     #[serde(default = "default_vt_seconds")]
     pub vt_seconds: u64,
 
@@ -47,6 +57,18 @@ fn default_download_queue_name() -> String {
 
 fn default_download_concurrency() -> u32 {
     2
+}
+
+fn default_enrich_queue_name() -> String {
+    "enrich".to_owned()
+}
+
+fn default_enrich_concurrency() -> u32 {
+    2
+}
+
+fn default_storage_root() -> String {
+    "./storage".to_owned()
 }
 
 fn default_vt_seconds() -> u64 {

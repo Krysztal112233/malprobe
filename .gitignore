@@ -1,3 +1,5 @@
 /target
 .env
 .pi-subagents/
+# Worker storage: downloaded file bytes, keyed by file id
+/storage
