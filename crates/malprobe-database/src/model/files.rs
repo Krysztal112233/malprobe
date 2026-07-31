@@ -11,10 +11,9 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     #[sea_orm(unique)]
-    pub sha256: String,
-    pub size: i64,
+    pub sha256: Option<String>,
+    pub size: Option<i64>,
     pub mime_type: Option<String>,
-    pub storage_path: String,
     pub status: FileStatus,
     pub verdict: Option<FileVerdict>,
     pub malware_name: Option<String>,
@@ -25,6 +24,8 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub scanned_at: Option<DateTimeWithTimeZone>,
+    #[sea_orm(column_type = "Text")]
+    pub source_url: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

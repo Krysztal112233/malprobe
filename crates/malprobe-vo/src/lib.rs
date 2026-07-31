@@ -1,6 +1,8 @@
 pub mod file;
+pub mod task;
 
-pub use file::{FileStatus, FileVO, FileVerdict};
+pub use file::{FileCreateRequest, FileStatus, FileVO, FileVerdict};
+pub use task::ScanTask;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

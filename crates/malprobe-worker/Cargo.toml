@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 dotenvy = { workspace = true }
 malprobe-config = { workspace = true }
+malprobe-vo = { workspace = true }
 pgmq = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }

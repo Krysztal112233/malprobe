@@ -1,14 +1,11 @@
 use std::time::Duration;
 
 use malprobe_config::{WorkerConfig, WorkerSection};
+use malprobe_vo::ScanTask;
 use pgmq::{Message, errors::PgmqError, pg_ext::PGMQueueExt};
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 use uuid::Uuid;
-
-mod task;
-
-use task::ScanTask;
 
 const QUEUE_CREATE_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 

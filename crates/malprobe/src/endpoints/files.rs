@@ -1,14 +1,76 @@
+use axum::Json;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use malprobe_common::Error;
+use malprobe_database::model::{files, sea_orm_active_enums};
+use malprobe_vo::{ApiResponse, FileCreateRequest, FileStatus, FileVO, FileVerdict, ScanTask};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, DatabaseBackend, EntityTrait, Set, Statement,
+    TransactionTrait, Value,
+};
+use uuid::Uuid;
 
-/// Upload a file for scanning.
+use crate::SCAN_QUEUE;
+use crate::endpoints::RestResult;
+use crate::state::AppState;
+
+/// Submit a file by its download URL for scanning. The file bytes are not
+/// uploaded here; the worker downloads them from the URL.
 #[utoipa::path(
     post,
     path = "/files",
     tag = "files",
-    responses((status = NOT_IMPLEMENTED, description = "Not implemented yet"))
+    request_body = FileCreateRequest,
+    responses(
+        (status = OK, description = "File accepted for scanning", body = ApiResponse<FileVO>),
+        (status = INTERNAL_SERVER_ERROR, description = "Server error")
+    )
 )]
-pub async fn upload() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+pub async fn upload(
+    State(state): State<AppState>,
+    Json(request): Json<FileCreateRequest>,
+) -> RestResult<FileVO> {
+    let id = Uuid::now_v7();
+
+    let model = files::ActiveModel {
+        id: Set(id),
+        sha256: Set(None),
+        size: Set(None),
+        mime_type: Set(None),
+        source_url: Set(request.url),
+        status: Set(sea_orm_active_enums::FileStatus::Pending),
+        verdict: Set(None),
+        malware_name: Set(None),
+        details: Set(None),
+        error: Set(None),
+        // created_at/updated_at are filled by the DB defaults.
+        created_at: Default::default(),
+        updated_at: Default::default(),
+        scanned_at: Set(None),
+    };
+
+    // The `files` row and the pgmq message are committed atomically, so a
+    // failure cannot leave an orphaned pending row without a scan task.
+    let tx = state.database.begin().await?;
+
+    let inserted = model.insert(&tx).await?;
+
+    tx.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT pgmq.send($1, $2::jsonb)",
+        vec![
+            Value::String(Some(Box::new(SCAN_QUEUE.to_owned()))),
+            Value::Json(Some(Box::new(
+                serde_json::to_value(ScanTask { file_id: id })
+                    .map_err(|e| Error::Unknown(format!("failed to serialize scan task: {e}")))?,
+            ))),
+        ],
+    ))
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(Json(ApiResponse::new(to_vo(inserted))))
 }
 
 /// Get a scan report by file ID.
@@ -16,11 +78,18 @@ pub async fn upload() -> StatusCode {
     get,
     path = "/files/{id}",
     tag = "files",
-    params(("id" = String, Path, description = "File ID")),
-    responses((status = NOT_IMPLEMENTED, description = "Not implemented yet"))
+    params(("id" = Uuid, Path, description = "File ID")),
+    responses(
+        (status = OK, description = "Scan report", body = ApiResponse<FileVO>),
+        (status = NOT_FOUND, description = "File not found")
+    )
 )]
-pub async fn get_by_id() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+pub async fn get_by_id(State(state): State<AppState>, Path(id): Path<Uuid>) -> RestResult<FileVO> {
+    let Some(model) = files::Entity::find_by_id(id).one(&state.database).await? else {
+        return Err(Error::UnknownWithCode(404, format!("file {id} not found")).into());
+    };
+
+    Ok(Json(ApiResponse::new(to_vo(model))))
 }
 
 /// Get a scan report by SHA-256 hash.
@@ -56,4 +125,41 @@ pub async fn list() -> StatusCode {
 )]
 pub async fn delete() -> StatusCode {
     StatusCode::NOT_IMPLEMENTED
+}
+
+fn to_vo(model: files::Model) -> FileVO {
+    FileVO {
+        id: model.id,
+        sha256: model.sha256,
+        size: model.size,
+        mime_type: model.mime_type,
+        status: to_status(model.status),
+        verdict: model.verdict.map(to_verdict),
+        malware_name: model.malware_name,
+        details: model.details,
+        error: model.error,
+        // The entity uses `DateTime<FixedOffset>` (sqlx-postgres); the VO
+        // contract exposes UTC.
+        created_at: model.created_at.with_timezone(&chrono::Utc),
+        updated_at: model.updated_at.with_timezone(&chrono::Utc),
+        scanned_at: model.scanned_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }
+}
+
+fn to_status(status: sea_orm_active_enums::FileStatus) -> FileStatus {
+    match status {
+        sea_orm_active_enums::FileStatus::Pending => FileStatus::Pending,
+        sea_orm_active_enums::FileStatus::Scanning => FileStatus::Scanning,
+        sea_orm_active_enums::FileStatus::Completed => FileStatus::Completed,
+        sea_orm_active_enums::FileStatus::Failed => FileStatus::Failed,
+    }
+}
+
+fn to_verdict(verdict: sea_orm_active_enums::FileVerdict) -> FileVerdict {
+    match verdict {
+        sea_orm_active_enums::FileVerdict::Clean => FileVerdict::Clean,
+        sea_orm_active_enums::FileVerdict::Suspicious => FileVerdict::Suspicious,
+        sea_orm_active_enums::FileVerdict::Malicious => FileVerdict::Malicious,
+        sea_orm_active_enums::FileVerdict::Error => FileVerdict::Error,
+    }
 }

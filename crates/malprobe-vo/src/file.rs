@@ -3,11 +3,23 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+/// Request body for submitting a file by its download URL.
+///
+/// The backend only records the URL and enqueues a scan task; the worker
+/// downloads the bytes itself.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct FileCreateRequest {
+    /// URL the worker will download the file bytes from.
+    pub url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FileVO {
     pub id: Uuid,
-    pub sha256: String,
-    pub size: i64,
+    /// SHA-256 of the file bytes, filled in by the worker after download.
+    pub sha256: Option<String>,
+    /// File size in bytes, filled in by the worker after download.
+    pub size: Option<i64>,
     pub mime_type: Option<String>,
     pub status: FileStatus,
     pub verdict: Option<FileVerdict>,
@@ -46,8 +58,8 @@ mod tests {
     fn file_vo_serializes_with_api_visible_fields() {
         let vo = FileVO {
             id: Uuid::now_v7(),
-            sha256: "abc".to_owned(),
-            size: 42,
+            sha256: Some("abc".to_owned()),
+            size: Some(42),
             mime_type: Some("text/plain".to_owned()),
             status: FileStatus::Pending,
             verdict: None,
@@ -63,8 +75,10 @@ mod tests {
 
         assert_eq!(value["mime_type"], "text/plain");
         assert_eq!(value["status"], "pending");
+        assert_eq!(value["sha256"], "abc");
+        assert_eq!(value["size"], 42);
         assert_eq!(value["created_at"], "1970-01-01T00:00:00Z");
-        assert!(value.get("storage_path").is_none());
+        assert!(value.get("source_url").is_none());
     }
 
     #[test]

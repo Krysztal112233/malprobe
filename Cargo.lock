@@ -1355,6 +1355,7 @@ name = "malprobe"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "dotenvy",
  "log",
  "malprobe-common",
@@ -1373,6 +1374,7 @@ dependencies = [
  "utoipa",
  "utoipa-axum",
  "utoipa-scalar",
+ "uuid",
 ]
 
 [[package]]
@@ -1428,6 +1430,7 @@ version = "0.1.0"
 dependencies = [
  "dotenvy",
  "malprobe-config",
+ "malprobe-vo",
  "pgmq",
  "serde",
  "tokio",

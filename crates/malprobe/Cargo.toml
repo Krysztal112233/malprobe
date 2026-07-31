@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 axum.workspace = true
+chrono.workspace = true
 dotenvy.workspace = true
 log.workspace = true
 mimalloc.workspace = true
@@ -19,6 +20,7 @@ tracing.workspace = true
 utoipa-axum.workspace = true
 utoipa-scalar.workspace = true
 utoipa.workspace = true
+uuid.workspace = true
 
 malprobe-common.workspace = true
 malprobe-config.workspace = true
