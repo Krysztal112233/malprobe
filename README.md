@@ -18,7 +18,7 @@ Malprobe provides file upload and scanning capabilities, helping users quickly d
 - `crates/malprobe` — main backend service (API entrypoint)
 - `crates/malprobe-common` — shared error handling
 - `crates/malprobe-vo` — pure response value objects (VOs)
-- `crates/malprobe-worker` — scan worker consuming scan tasks from the pgmq queue
+- `crates/malprobe-worker` — pipeline worker consuming pgmq tasks: downloads the file bytes, sniffs the mime type, and runs ClamAV INSTREAM scans
 - `crates/migration` — database migrations
 
 ## Running

@@ -16,8 +16,10 @@ pub struct FileCreateRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FileVO {
     pub id: Uuid,
+
     /// SHA-256 of the file bytes, filled in by the worker after download.
     pub sha256: Option<String>,
+
     /// File size in bytes, filled in by the worker after download.
     pub size: Option<i64>,
     pub mime_type: Option<String>,

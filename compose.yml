@@ -70,11 +70,21 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Inside the compose network the clamd endpoint is the `clamav` service.
+      MALPROBE__WORKER__CLAMD_ADDR: "clamav:3310"
+      # Keep downloaded bytes across worker container restarts.
+      MALPROBE__WORKER__STORAGE_ROOT: "/storage"
+    volumes:
+      - file-storage:/storage
     depends_on:
       backend-migration:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      clamav:
+        condition: service_started
 
 volumes:
   postgres-data:
+  file-storage:
