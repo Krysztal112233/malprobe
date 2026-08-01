@@ -46,6 +46,11 @@ pub struct WorkerSection {
     #[serde(default = "default_max_read_ct")]
     pub max_read_ct: u32,
 
+    /// Upper bound for downloaded file bytes; larger responses are rejected
+    /// (matches clamd's INSTREAM size limit, keeping memory bounded).
+    #[serde(default = "default_max_download_bytes")]
+    pub max_download_bytes: u64,
+
     #[serde(default = "default_vt_seconds")]
     pub vt_seconds: u64,
 
@@ -94,6 +99,10 @@ fn default_clamd_timeout_seconds() -> u64 {
 
 fn default_max_read_ct() -> u32 {
     5
+}
+
+fn default_max_download_bytes() -> u64 {
+    25 * 1024 * 1024
 }
 
 fn default_vt_seconds() -> u64 {

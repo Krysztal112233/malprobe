@@ -14,6 +14,7 @@ use malprobe_vo::ScanTask;
 use pgmq::{Message, errors::PgmqError, pg_ext::PGMQueueExt};
 use sea_orm::DatabaseConnection;
 use sha2::Digest;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -103,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let enrich_queue = cfg.enrich_queue_name.clone();
         let scan_queue = cfg.queue_name.clone();
         let max_read_ct = cfg.max_read_ct;
+        let max_download_bytes = cfg.max_download_bytes;
         let mut shutdown = shutdown_rx.clone();
         handles.push(tokio::spawn(async move {
             worker_loop(
@@ -124,6 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             queue_name: &queue_name,
                             storage_root: &storage_root,
                             max_read_ct,
+                            max_download_bytes,
                         };
                         process_download(&ctx, &enrich_queue, &scan_queue, file_id, read_ct, msg_id)
                             .await
@@ -144,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let queue_name = cfg.enrich_queue_name.clone();
         let storage_root = cfg.storage_root.clone();
         let max_read_ct = cfg.max_read_ct;
+        let max_download_bytes = cfg.max_download_bytes;
         let mut shutdown = shutdown_rx.clone();
         handles.push(tokio::spawn(async move {
             worker_loop(
@@ -163,6 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             queue_name: &queue_name,
                             storage_root: &storage_root,
                             max_read_ct,
+                            max_download_bytes,
                         };
                         process_enrich(&ctx, file_id, read_ct, msg_id).await
                     }
@@ -418,6 +423,7 @@ struct StageCtx<'a> {
     queue_name: &'a str,
     storage_root: &'a str,
     max_read_ct: u32,
+    max_download_bytes: u64,
 }
 
 /// Download stage: fetch the file bytes from `source_url`, persist them under
@@ -453,7 +459,7 @@ async fn process_download(
     // Treat non-2xx responses as download failures (a 404 error page is not
     // the file bytes), and route every failure through the give-up policy so
     // a permanently broken source cannot retry forever.
-    let response = match reqwest::get(&source).await {
+    let mut response = match reqwest::get(&source).await {
         Ok(response) => response,
         Err(e) => {
             return download_fail_or_archive(
@@ -477,23 +483,12 @@ async fn process_download(
         )
         .await;
     }
-    let bytes = match response.bytes().await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return download_fail_or_archive(
-                ctx,
-                file_id,
-                read_ct,
-                msg_id,
-                &format!("failed to read response body: {e}"),
-            )
-            .await;
-        }
-    };
 
     // Persist the bytes before acknowledging anything: the enrich and scan
     // stages read the file from disk by file id. Write to a temp path and
-    // rename so a crash never leaves a half-written file behind.
+    // rename so a crash never leaves a half-written file behind. The body is
+    // streamed chunk by chunk (never buffered whole) and aborted as soon as
+    // it exceeds `max_download_bytes`, keeping worker memory bounded.
     let dir = PathBuf::from(ctx.storage_root);
     let path = dir.join(file_id.to_string());
     if let Err(error) = tokio::fs::create_dir_all(&dir).await {
@@ -507,16 +502,90 @@ async fn process_download(
         .await;
     }
     let tmp = path.with_extension("tmp");
-    if let Err(error) = tokio::fs::write(&tmp, &bytes).await {
+
+    if let Some(length) = response.content_length()
+        && length > ctx.max_download_bytes
+    {
         return download_fail_or_archive(
             ctx,
             file_id,
             read_ct,
             msg_id,
-            &format!("failed to write {}: {error}", tmp.display()),
+            &format!(
+                "download exceeds {} byte limit (content-length {length})",
+                ctx.max_download_bytes
+            ),
         )
         .await;
     }
+
+    let mut file = match tokio::fs::File::create(&tmp).await {
+        Ok(file) => file,
+        Err(error) => {
+            return download_fail_or_archive(
+                ctx,
+                file_id,
+                read_ct,
+                msg_id,
+                &format!("failed to write {}: {error}", tmp.display()),
+            )
+            .await;
+        }
+    };
+    let mut total: u64 = 0;
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return download_fail_or_archive(
+                    ctx,
+                    file_id,
+                    read_ct,
+                    msg_id,
+                    &format!("failed to read response body: {e}"),
+                )
+                .await;
+            }
+        };
+        total += chunk.len() as u64;
+        if total > ctx.max_download_bytes {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return download_fail_or_archive(
+                ctx,
+                file_id,
+                read_ct,
+                msg_id,
+                &format!("download exceeds {} byte limit", ctx.max_download_bytes),
+            )
+            .await;
+        }
+        if let Err(error) = file.write_all(&chunk).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return download_fail_or_archive(
+                ctx,
+                file_id,
+                read_ct,
+                msg_id,
+                &format!("failed to write {}: {error}", tmp.display()),
+            )
+            .await;
+        }
+    }
+    if let Err(error) = file.flush().await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to flush {}: {error}", tmp.display()),
+        )
+        .await;
+    }
+    drop(file);
+
     if let Err(error) = tokio::fs::rename(&tmp, &path).await {
         return download_fail_or_archive(
             ctx,
@@ -528,6 +597,9 @@ async fn process_download(
         .await;
     }
 
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("failed to read back {}: {e}", path.display()))?;
     let sha256 = hex::encode(sha2::Sha256::digest(&bytes));
     if let Err(error) =
         Files::mark_downloaded(file_id, sha256, bytes.len() as i64, ctx.database).await
