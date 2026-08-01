@@ -12,7 +12,7 @@ POST /files → store file → INSERT files(pending) → pgmq.send("scan")
 
 - `crates/malprobe` — backend API (axum); uploads enqueue scan tasks
 - `crates/malprobe-worker` — consumes tasks, runs ClamAV, updates results
-- `crates/malprobe-config` — all config structs + loading (`malprobe.toml` + `MALPROBE_*` env)
+- `crates/malprobe-config` — all config structs + loading (`malprobe.toml` + `MALPROBE__*` env; double underscore separates nesting levels so field names keep single underscores, e.g. `MALPROBE__WORKER__VT_SECONDS` → `worker.vt_seconds`)
 - `crates/malprobe-common` / `crates/malprobe-vo` / `crates/migration` — errors / VOs / SeaORM migrations
 
 ## Rules
