@@ -46,7 +46,6 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("MALPROBE__ADDR".into(), "9.9.9.9:9000".into());
         env.insert("MALPROBE__DATABASE__DSN".into(), "postgresql://x".into());
-        env.insert("MALPROBE__DATABASE__MIGRATE".into(), "false".into());
         env.insert("MALPROBE__WORKER__VT_SECONDS".into(), "5".into());
         env.insert("MALPROBE__WORKER__CLAMD_ADDR".into(), "1.2.3.4:99".into());
 
@@ -65,7 +64,6 @@ mod tests {
         assert_eq!(config.worker.vt_seconds, 5);
         assert_eq!(config.worker.clamd_addr, "1.2.3.4:99");
         assert_eq!(config.database.dsn, "postgresql://x");
-        assert!(!config.database.migrate);
     }
 
     /// `MALPROBE__ADDR` maps to the top-level `addr` field of `BackendConfig`.
@@ -74,7 +72,6 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("MALPROBE__ADDR".into(), "9.9.9.9:9000".into());
         env.insert("MALPROBE__DATABASE__DSN".into(), "postgresql://x".into());
-        env.insert("MALPROBE__DATABASE__MIGRATE".into(), "true".into());
 
         let config: BackendConfig = Config::builder()
             .add_source(
