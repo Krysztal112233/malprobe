@@ -12,6 +12,4 @@ pub struct DatabaseConfig {
     pub slow_statements_logging_threshold: Option<u64>,
     pub max_connections: Option<u32>,
     pub min_connections: Option<u32>,
-
-    pub migrate: bool,
 }

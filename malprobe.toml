@@ -9,7 +9,6 @@ addr = "0.0.0.0:8000"
 slow_statements_logging_threshold = 5000
 max_connections = 32
 min_connections = 4
-migrate = true
 
 [worker]
 # Shared by the backend (enqueue) and the worker (consume) via pgmq.
