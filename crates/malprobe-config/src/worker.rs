@@ -33,6 +33,19 @@ pub struct WorkerSection {
     #[serde(default = "default_storage_root")]
     pub storage_root: String,
 
+    /// Address of the clamd INSTREAM endpoint (`host:port`).
+    #[serde(default = "default_clamd_addr")]
+    pub clamd_addr: String,
+
+    /// Timeout for one clamd INSTREAM scan, in seconds.
+    #[serde(default = "default_clamd_timeout_seconds")]
+    pub clamd_timeout_seconds: u64,
+
+    /// Maximum number of queue reads before a failing scan is marked as
+    /// permanently failed instead of being retried again.
+    #[serde(default = "default_max_read_ct")]
+    pub max_read_ct: u32,
+
     #[serde(default = "default_vt_seconds")]
     pub vt_seconds: u64,
 
@@ -69,6 +82,18 @@ fn default_enrich_concurrency() -> u32 {
 
 fn default_storage_root() -> String {
     "./storage".to_owned()
+}
+
+fn default_clamd_addr() -> String {
+    "127.0.0.1:3310".to_owned()
+}
+
+fn default_clamd_timeout_seconds() -> u64 {
+    120
+}
+
+fn default_max_read_ct() -> u32 {
+    5
 }
 
 fn default_vt_seconds() -> u64 {

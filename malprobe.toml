@@ -5,7 +5,7 @@
 addr = "0.0.0.0:8000"
 
 [database]
-# dsn comes from the MALPROBE_DATABASE_DSN env var (see .env)
+# dsn comes from the MALPROBE__DATABASE__DSN env var (see .env)
 slow_statements_logging_threshold = 5000
 max_connections = 32
 min_connections = 4
@@ -19,3 +19,8 @@ concurrency = 2
 vt_seconds = 300
 poll_timeout_ms = 5000
 poll_interval_ms = 500
+# ClamAV INSTREAM endpoint (compose overrides it with the `clamav` service).
+clamd_addr = "127.0.0.1:3310"
+clamd_timeout_seconds = 120
+# Give up after this many scan attempts instead of retrying forever.
+max_read_ct = 5

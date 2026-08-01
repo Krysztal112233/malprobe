@@ -39,6 +39,8 @@ migration = { path = "./crates/migration/" }
 
 # Postgres message queue (pgmq-rs 0.33.x tracks sqlx 0.8, matching sea-orm)
 pgmq = "0.33.7"
+# ClamAV INSTREAM client (thin wrapper lives in malprobe-worker/src/clamav.rs)
+clamav-client = { version = "2.2.0", features = ["tokio"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 sha2 = "0.10.9"
 hex = "0.4.3"

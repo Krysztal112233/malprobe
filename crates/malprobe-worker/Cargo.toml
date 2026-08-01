@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+clamav-client = { workspace = true }
 dotenvy = { workspace = true }
 hex = { workspace = true }
 infer = { workspace = true }
