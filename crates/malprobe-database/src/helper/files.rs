@@ -1,8 +1,8 @@
 use malprobe_common::error::Error;
 use malprobe_vo::ScanTask;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Set,
-    Statement, Value,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
+    QueryOrder, Set, Statement, Value,
 };
 use uuid::Uuid;
 
@@ -85,6 +85,21 @@ pub trait FileHelper {
     ) -> Result<Option<files::Model>, Error> {
         Ok(<Files as EntityTrait>::find_by_id(id.into())
             .one(database)
+            .await?)
+    }
+
+    /// Fetch every scan record for a file hash, newest first.
+    ///
+    /// The same bytes can be submitted from different sources, each keeping
+    /// its own record; deduplication is the caller's job.
+    async fn find_by_hash(
+        sha256: impl Into<String> + Send,
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<Vec<files::Model>, Error> {
+        Ok(files::Entity::find()
+            .filter(files::Column::Sha256.eq(sha256.into()))
+            .order_by_desc(files::Column::CreatedAt)
+            .all(database)
             .await?)
     }
 

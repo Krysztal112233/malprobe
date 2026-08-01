@@ -5,7 +5,7 @@ use malprobe_common::Error;
 use malprobe_database::helper::files::FileHelper;
 use malprobe_database::model::prelude::Files;
 use malprobe_database::model::{files, sea_orm_active_enums};
-use malprobe_vo::{ApiResponse, FileCreateRequest, FileStatus, FileVO, FileVerdict};
+use malprobe_vo::{ApiResponse, FileCreateRequest, FileStatus, FileVO, FileVerdict, PagedResponse};
 use uuid::Uuid;
 
 use crate::endpoints::RestResult;
@@ -59,16 +59,30 @@ pub async fn get_by_id(State(state): State<AppState>, Path(id): Path<Uuid>) -> R
     Ok(Json(ApiResponse::new(to_vo(model))))
 }
 
-/// Get a scan report by SHA-256 hash.
+/// Get all scan reports by SHA-256 hash, newest first.
+///
+/// The same bytes can be submitted from different sources; every submission
+/// keeps its own scan record, so the response is a list and deduplication is
+/// left to the caller. (`ApiResponse` flattens struct payloads, so the list
+/// rides in the same `PagedResponse` shape the list endpoint uses.)
 #[utoipa::path(
     get,
     path = "/files/hash/{sha256}",
     tag = "files",
     params(("sha256" = String, Path, description = "SHA-256 hash of the file")),
-    responses((status = NOT_IMPLEMENTED, description = "Not implemented yet"))
+    responses(
+        (status = OK, description = "All scan reports for this hash, newest first", body = ApiResponse<PagedResponse<FileVO>>),
+        (status = INTERNAL_SERVER_ERROR, description = "Server error")
+    )
 )]
-pub async fn get_by_hash() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+pub async fn get_by_hash(
+    State(state): State<AppState>,
+    Path(sha256): Path<String>,
+) -> RestResult<PagedResponse<FileVO>> {
+    let models = Files::find_by_hash(sha256, &state.database).await?;
+    Ok(Json(ApiResponse::new(PagedResponse::with_entire(
+        models.into_iter().map(to_vo),
+    ))))
 }
 
 /// List scanned files.
