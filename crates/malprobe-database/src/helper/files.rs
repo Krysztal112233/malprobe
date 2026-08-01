@@ -1,7 +1,8 @@
 use malprobe_common::error::Error;
 use malprobe_vo::ScanTask;
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, DatabaseBackend, EntityTrait, Set, Statement, Value,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Set,
+    Statement, Value,
 };
 use uuid::Uuid;
 
@@ -9,7 +10,7 @@ use crate::helper::SafeTransactionConnectionTrait;
 use crate::model::{
     files,
     prelude::Files,
-    sea_orm_active_enums::{FileSourceType, FileStatus},
+    sea_orm_active_enums::{FileSourceType, FileStatus, FileVerdict},
 };
 
 /// pgmq queue download tasks are enqueued into by the backend; the worker
@@ -165,6 +166,65 @@ pub trait FileHelper {
         .update(database)
         .await?;
         Ok(())
+    }
+
+    /// Move the file into the `scanning` state while the ClamAV scan runs.
+    async fn mark_scanning(
+        id: impl Into<Uuid> + Send,
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<(), Error> {
+        files::ActiveModel {
+            id: Set(id.into()),
+            status: Set(FileStatus::Scanning),
+            ..Default::default()
+        }
+        .update(database)
+        .await?;
+        Ok(())
+    }
+
+    /// Record the terminal outcome of a finished scan (status `completed`).
+    async fn mark_completed(
+        id: impl Into<Uuid> + Send,
+        verdict: Option<FileVerdict>,
+        malware_name: Option<String>,
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<(), Error> {
+        files::ActiveModel {
+            id: Set(id.into()),
+            status: Set(FileStatus::Completed),
+            verdict: Set(verdict),
+            malware_name: Set(malware_name),
+            scanned_at: Set(Some(chrono::Utc::now().into())),
+            ..Default::default()
+        }
+        .update(database)
+        .await?;
+        Ok(())
+    }
+
+    /// Record a scan that gave up after repeated failures (status `failed`).
+    ///
+    /// Only rows that are not already completed are touched: a stale retry
+    /// racing with a concurrent successful scan must not overwrite the
+    /// verdict. Returns whether a row was updated (`false` means the file was
+    /// already finalized by someone else, or is gone).
+    async fn mark_failed(
+        id: impl Into<Uuid> + Send,
+        error: impl Into<String> + Send,
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<bool, Error> {
+        let result = files::Entity::update_many()
+            .set(files::ActiveModel {
+                status: Set(FileStatus::Failed),
+                error: Set(Some(error.into())),
+                ..Default::default()
+            })
+            .filter(files::Column::Id.eq(id.into()))
+            .filter(files::Column::Status.ne(FileStatus::Completed))
+            .exec(database)
+            .await?;
+        Ok(result.rows_affected > 0)
     }
 }
 
