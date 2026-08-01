@@ -1,8 +1,8 @@
 use malprobe_common::error::Error;
 use malprobe_vo::ScanTask;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
-    QueryOrder, Set, Statement, Value,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, Set, Statement, Value,
 };
 use uuid::Uuid;
 
@@ -101,6 +101,21 @@ pub trait FileHelper {
             .order_by_desc(files::Column::CreatedAt)
             .all(database)
             .await?)
+    }
+
+    /// Fetch one page of scan records, newest first, plus the total row count.
+    async fn find_page(
+        page: u64,
+        size: u64,
+        database: &impl SafeTransactionConnectionTrait,
+    ) -> Result<(Vec<files::Model>, u64), Error> {
+        let paginator = files::Entity::find()
+            .order_by_desc(files::Column::CreatedAt)
+            .paginate(database, size);
+        let total = paginator.num_items().await?;
+        // `fetch_page` is 0-based.
+        let models = paginator.fetch_page(page - 1).await?;
+        Ok((models, total))
     }
 
     /// Make sure the scan queue exists. `pgmq.create` is idempotent; the

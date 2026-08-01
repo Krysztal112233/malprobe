@@ -1,11 +1,14 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use malprobe_common::Error;
 use malprobe_database::helper::files::FileHelper;
 use malprobe_database::model::prelude::Files;
 use malprobe_database::model::{files, sea_orm_active_enums};
-use malprobe_vo::{ApiResponse, FileCreateRequest, FileStatus, FileVO, FileVerdict, PagedResponse};
+use malprobe_vo::{
+    ApiResponse, FileCreateRequest, FileStatus, FileVO, FileVerdict, PageInfo, PagedResponse,
+};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::endpoints::RestResult;
@@ -85,15 +88,63 @@ pub async fn get_by_hash(
     ))))
 }
 
-/// List scanned files.
+/// Query parameters for the file list endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ListParams {
+    /// 1-based page number.
+    #[serde(default = "default_page")]
+    pub page: u32,
+    /// Page size, capped at 100.
+    #[serde(default = "default_size")]
+    pub size: u32,
+}
+
+fn default_page() -> u32 {
+    1
+}
+
+fn default_size() -> u32 {
+    20
+}
+
+/// List scanned files, newest first.
 #[utoipa::path(
     get,
     path = "/files",
     tag = "files",
-    responses((status = NOT_IMPLEMENTED, description = "Not implemented yet"))
+    params(
+        ("page" = Option<u32>, Query, description = "1-based page number (default 1)"),
+        ("size" = Option<u32>, Query, description = "Page size, max 100 (default 20)"),
+    ),
+    responses(
+        (status = OK, description = "Paged scan reports, newest first", body = ApiResponse<PagedResponse<FileVO>>),
+        (status = BAD_REQUEST, description = "Invalid page parameters"),
+        (status = INTERNAL_SERVER_ERROR, description = "Server error")
+    )
 )]
-pub async fn list() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+pub async fn list(
+    State(state): State<AppState>,
+    Query(params): Query<ListParams>,
+) -> RestResult<PagedResponse<FileVO>> {
+    if params.page == 0 {
+        return Err(Error::UnknownWithCode(400, "page must be >= 1".to_owned()).into());
+    }
+    if params.size == 0 || params.size > 100 {
+        return Err(
+            Error::UnknownWithCode(400, "size must be between 1 and 100".to_owned()).into(),
+        );
+    }
+
+    let (models, total) =
+        Files::find_page(params.page as u64, params.size as u64, &state.database).await?;
+    let has_next = (params.page as u64) * (params.size as u64) < total;
+    Ok(Json(ApiResponse::new(PagedResponse {
+        items: models.into_iter().map(to_vo).collect(),
+        page_info: PageInfo {
+            has_next,
+            total: total as usize,
+        },
+    })))
 }
 
 /// Delete a scanned file.
