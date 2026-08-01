@@ -104,11 +104,17 @@ pub trait FileHelper {
     }
 
     /// Fetch one page of scan records, newest first, plus the total row count.
+    ///
+    /// `page` is 1-based; 0 is rejected so a caller mistake fails loudly
+    /// instead of underflowing into `fetch_page(u64::MAX)`.
     async fn find_page(
         page: u64,
         size: u64,
         database: &impl SafeTransactionConnectionTrait,
     ) -> Result<(Vec<files::Model>, u64), Error> {
+        if page == 0 {
+            return Err(Error::Unknown(format!("page must be >= 1, got {page}")));
+        }
         let paginator = files::Entity::find()
             .order_by_desc(files::Column::CreatedAt)
             .paginate(database, size);
