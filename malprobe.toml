@@ -23,3 +23,6 @@ clamd_addr = "127.0.0.1:3310"
 clamd_timeout_seconds = 120
 # Give up after this many scan attempts instead of retrying forever.
 max_read_ct = 5
+# Upper bound for downloaded file bytes; larger responses are rejected.
+# 25 MiB matches clamd's INSTREAM size limit, keeping worker memory bounded.
+max_download_bytes = 26214400
