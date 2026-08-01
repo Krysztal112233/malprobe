@@ -446,8 +446,8 @@ async fn process_download(
     let source = match model.source {
         Some(source) => source,
         None => {
-            warn!(%file_id, "file has no download source, archiving download task");
-            return archive_message(ctx, msg_id, file_id).await;
+            warn!(%file_id, "file has no download source, marking failed and archiving task");
+            return finalize_and_archive(ctx, file_id, msg_id, "file has no download source").await;
         }
     };
     // Treat non-2xx responses as download failures (a 404 error page is not
@@ -595,10 +595,23 @@ async fn download_fail_or_archive(
     }
 
     warn!(%file_id, read_ct, max_read_ct = ctx.max_read_ct, %error, "download failed permanently, marking file as failed");
-    if let Err(e) = Files::mark_failed(file_id, error, ctx.database).await {
-        warn!(%file_id, %e, "failed to record download failure");
+    finalize_and_archive(ctx, file_id, msg_id, error).await
+}
+
+/// Marks the file permanently failed, then archives the message only if the
+/// marking succeeded. A failed marking (database trouble) keeps the message
+/// in the queue so the retry can finalize once the database recovers;
+/// archiving anyway would strand the row in `pending` with no retry left.
+async fn finalize_and_archive(
+    ctx: &StageCtx<'_>,
+    file_id: Uuid,
+    msg_id: i64,
+    error: &str,
+) -> Result<(), String> {
+    match Files::mark_failed(file_id, error, ctx.database).await {
+        Ok(_) => archive_message(ctx, msg_id, file_id).await,
+        Err(e) => Err(format!("failed to record download failure: {e}")),
     }
-    archive_message(ctx, msg_id, file_id).await
 }
 
 /// Moves a message out of its queue into the pgmq archive table.
@@ -628,26 +641,31 @@ async fn process_enrich(
     let path = PathBuf::from(ctx.storage_root).join(file_id.to_string());
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
-        Err(error) if !path.exists() => {
+        Err(error) => {
             // The scan stage removes the bytes once its verdict is persisted;
             // if the file is already gone the scan reached a terminal state
             // (completed or permanently failed) and there is nothing left to
             // sniff.
-            let model = Files::find_by_id(file_id, ctx.database)
-                .await
-                .map_err(|e| format!("failed to look up file {file_id}: {e}"))?;
-            if model.is_some_and(|m| matches!(m.status, FileStatus::Completed | FileStatus::Failed))
-            {
-                info!(%file_id, "file scan already finished, skipping enrichment");
-                return Ok(());
+            if !path.exists() {
+                let model = Files::find_by_id(file_id, ctx.database)
+                    .await
+                    .map_err(|e| format!("failed to look up file {file_id}: {e}"))?;
+                if model
+                    .is_some_and(|m| matches!(m.status, FileStatus::Completed | FileStatus::Failed))
+                {
+                    info!(%file_id, "file scan already finished, skipping enrichment");
+                    return Ok(());
+                }
             }
+            // Every other read failure (missing but not finalized, permission,
+            // I/O) retries until `max_read_ct`, then the message is archived
+            // instead of retrying forever.
             if should_give_up(read_ct, ctx.max_read_ct) {
-                warn!(%file_id, read_ct, max_read_ct = ctx.max_read_ct, "file bytes missing and never finalized, archiving enrich task");
+                warn!(%file_id, read_ct, max_read_ct = ctx.max_read_ct, "cannot read file bytes, archiving enrich task");
                 return archive_message(ctx, msg_id, file_id).await;
             }
             return Err(format!("failed to read {}: {error}", path.display()));
         }
-        Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
     };
 
     match infer::get(&bytes) {
