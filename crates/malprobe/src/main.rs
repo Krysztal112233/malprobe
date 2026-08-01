@@ -1,10 +1,13 @@
 use axum::Router;
+use axum::http::Method;
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use log::error;
 use malprobe_common::error::Error;
 use malprobe_config::BackendConfig;
 use malprobe_database::helper::files::FileHelper;
 use malprobe_database::model::prelude::Files;
 use mimalloc::MiMalloc;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::{Scalar, Servable};
@@ -53,14 +56,53 @@ async fn main() -> Result<(), Error> {
         .merge(endpoints::router())
         .split_for_parts();
 
-    let router: Router = router
+    let router = router
         .merge(Scalar::with_url("/docs", openapi))
-        .layer(TraceLayer::new_for_http())
-        .with_state(states);
+        .layer(TraceLayer::new_for_http());
 
-    let listener = tokio::net::TcpListener::bind(config.addr)
+    // CORS is opt-in: absent in config means browser clients are not served.
+    let router = match build_cors_layer(&config) {
+        Some(cors) => router.layer(cors),
+        None => router,
+    };
+
+    let router = router.with_state(states);
+    serve(router, &config.addr).await
+}
+
+/// Builds the CORS layer from `cors.allow_origins` (`"*"` = any origin, a
+/// comma-separated list = restricted origins). Returns `None` when CORS is
+/// not configured.
+fn build_cors_layer(config: &BackendConfig) -> Option<CorsLayer> {
+    let origins = config
+        .cors
+        .allow_origins
+        .as_deref()
+        .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()))?
+        .collect::<Vec<_>>();
+    if origins.is_empty() {
+        return None;
+    }
+
+    let layer = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
+
+    if origins.contains(&"*") {
+        Some(layer.allow_origin(AllowOrigin::any()))
+    } else {
+        let origins = origins
+            .into_iter()
+            .filter_map(|o| HeaderValue::from_str(o).ok())
+            .collect::<Vec<_>>();
+        Some(layer.allow_origin(AllowOrigin::list(origins)))
+    }
+}
+
+async fn serve(router: Router, addr: &str) -> Result<(), Error> {
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .inspect_err(|e| error!("{e}"))?;
+        .inspect_err(|e| error!("failed to bind {addr}: {e}"))?;
 
     axum::serve(listener, router).await?;
 
