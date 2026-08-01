@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pgmq,
                 queue_name,
                 &cfg,
-                move |file_id, read_ct| {
+                move |file_id, read_ct, _msg_id| {
                     let database = database.clone();
                     let storage_root = storage_root.clone();
                     let clamd_addr = clamd_addr.clone();
@@ -102,29 +102,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let storage_root = cfg.storage_root.clone();
         let enrich_queue = cfg.enrich_queue_name.clone();
         let scan_queue = cfg.queue_name.clone();
+        let max_read_ct = cfg.max_read_ct;
         let mut shutdown = shutdown_rx.clone();
         handles.push(tokio::spawn(async move {
             worker_loop(
                 index,
                 pgmq.clone(),
-                queue_name,
+                queue_name.clone(),
                 &cfg,
-                move |file_id, _read_ct| {
+                move |file_id, read_ct, msg_id| {
                     let database = database.clone();
                     let pgmq = pgmq.clone();
+                    let queue_name = queue_name.clone();
                     let storage_root = storage_root.clone();
                     let enrich_queue = enrich_queue.clone();
                     let scan_queue = scan_queue.clone();
                     async move {
-                        process_download(
-                            &database,
-                            &pgmq,
-                            &storage_root,
-                            &enrich_queue,
-                            &scan_queue,
-                            file_id,
-                        )
-                        .await
+                        let ctx = StageCtx {
+                            database: &database,
+                            pgmq: &pgmq,
+                            queue_name: &queue_name,
+                            storage_root: &storage_root,
+                            max_read_ct,
+                        };
+                        process_download(&ctx, &enrich_queue, &scan_queue, file_id, read_ct, msg_id)
+                            .await
                     }
                 },
                 &mut shutdown,
@@ -141,17 +143,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let database = database.clone();
         let queue_name = cfg.enrich_queue_name.clone();
         let storage_root = cfg.storage_root.clone();
+        let max_read_ct = cfg.max_read_ct;
         let mut shutdown = shutdown_rx.clone();
         handles.push(tokio::spawn(async move {
             worker_loop(
                 index,
-                pgmq,
-                queue_name,
+                pgmq.clone(),
+                queue_name.clone(),
                 &cfg,
-                move |file_id, _read_ct| {
+                move |file_id, read_ct, msg_id| {
                     let database = database.clone();
+                    let pgmq = pgmq.clone();
+                    let queue_name = queue_name.clone();
                     let storage_root = storage_root.clone();
-                    async move { process_enrich(&database, &storage_root, file_id).await }
+                    async move {
+                        let ctx = StageCtx {
+                            database: &database,
+                            pgmq: &pgmq,
+                            queue_name: &queue_name,
+                            storage_root: &storage_root,
+                            max_read_ct,
+                        };
+                        process_enrich(&ctx, file_id, read_ct, msg_id).await
+                    }
                 },
                 &mut shutdown,
             )
@@ -172,9 +186,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Polls one queue forever. One `worker_loop` per configured concurrency slot.
 ///
-/// `process` gets the file id and the queue read count; anything else it
-/// needs (the pgmq client, the database, the queue to enqueue into) is
-/// captured by the closure.
+/// `process` gets the file id, the queue read count and the message id;
+/// anything else it needs (the pgmq client, the database, the queue to
+/// enqueue into) is captured by the closure.
 async fn worker_loop<F, Fut>(
     index: u32,
     pgmq: PGMQueueExt,
@@ -183,7 +197,7 @@ async fn worker_loop<F, Fut>(
     process: F,
     shutdown: &mut watch::Receiver<bool>,
 ) where
-    F: Fn(Uuid, u32) -> Fut + Send + Sync,
+    F: Fn(Uuid, u32, i64) -> Fut + Send + Sync,
     Fut: Future<Output = Result<(), String>> + Send,
 {
     let vt = Duration::from_secs(cfg.vt_seconds);
@@ -221,22 +235,22 @@ async fn worker_loop<F, Fut>(
 ///
 /// On success the message is deleted. On failure the message is left in the
 /// queue: it becomes visible again after the visibility timeout, which gives
-/// us retry for free. The process closure receives `read_ct` so a stage can
-/// give up after a configured number of attempts and record a permanent
-/// failure (the scan stage does this via `max_read_ct`).
+/// us retry for free. The process closure receives `read_ct` (so a stage can
+/// give up after a configured number of attempts and archive the message)
+/// and the message id (needed by `pgmq.archive`).
 async fn process_message<F, Fut>(
     pgmq: &PGMQueueExt,
     queue_name: &str,
     message: &Message<ScanTask>,
     process: &F,
 ) where
-    F: Fn(Uuid, u32) -> Fut + Send + Sync,
+    F: Fn(Uuid, u32, i64) -> Fut + Send + Sync,
     Fut: Future<Output = Result<(), String>> + Send,
 {
     let file_id = message.message.file_id;
     info!(msg_id = message.msg_id, read_ct = message.read_ct, %file_id, queue = %queue_name, "received task");
 
-    match process(file_id, message.read_ct.max(0) as u32).await {
+    match process(file_id, message.read_ct.max(0) as u32, message.msg_id).await {
         Ok(()) => {
             if let Err(error) = pgmq.delete(queue_name, message.msg_id).await {
                 error!(msg_id = message.msg_id, %error, "failed to delete message from queue");
@@ -396,90 +410,240 @@ fn should_give_up(read_ct: u32, max_read_ct: u32) -> bool {
     read_ct >= max_read_ct
 }
 
+/// Shared per-stage context: the dependencies every queue stage needs.
+struct StageCtx<'a> {
+    database: &'a DatabaseConnection,
+    pgmq: &'a PGMQueueExt,
+    /// The queue this stage consumes; also the archive target on give-up.
+    queue_name: &'a str,
+    storage_root: &'a str,
+    max_read_ct: u32,
+}
+
 /// Download stage: fetch the file bytes from `source_url`, persist them under
 /// `{storage_root}/{file_id}` and fan out to the enrich and scan queues.
+///
+/// Transient failures are retried via the queue visibility timeout; after
+/// `max_read_ct` attempts the file is marked failed and the message is
+/// archived. Permanently unprocessable tasks (missing row/source) are
+/// archived immediately.
 async fn process_download(
-    database: &DatabaseConnection,
-    pgmq: &PGMQueueExt,
-    storage_root: &str,
+    ctx: &StageCtx<'_>,
     enrich_queue: &str,
     scan_queue: &str,
     file_id: Uuid,
+    read_ct: u32,
+    msg_id: i64,
 ) -> Result<(), String> {
-    let Some(model) = Files::find_by_id(file_id, database)
+    let Some(model) = Files::find_by_id(file_id, ctx.database)
         .await
         .map_err(|e| format!("failed to look up file {file_id}: {e}"))?
     else {
-        return Err(format!("file {file_id} not found"));
+        warn!(%file_id, "file row not found, archiving download task");
+        return archive_message(ctx, msg_id, file_id).await;
     };
 
-    let source = model.source.ok_or("file has no download source")?;
-    let response = reqwest::get(&source)
-        .await
-        .map_err(|e| format!("failed to download {source}: {e}"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("failed to read response body: {e}"))?;
+    let source = match model.source {
+        Some(source) => source,
+        None => {
+            warn!(%file_id, "file has no download source, archiving download task");
+            return archive_message(ctx, msg_id, file_id).await;
+        }
+    };
+    // Treat non-2xx responses as download failures (a 404 error page is not
+    // the file bytes), and route every failure through the give-up policy so
+    // a permanently broken source cannot retry forever.
+    let response = match reqwest::get(&source).await {
+        Ok(response) => response,
+        Err(e) => {
+            return download_fail_or_archive(
+                ctx,
+                file_id,
+                read_ct,
+                msg_id,
+                &format!("failed to download {source}: {e}"),
+            )
+            .await;
+        }
+    };
+    let status = response.status();
+    if !status.is_success() {
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to download {source}: HTTP {status}"),
+        )
+        .await;
+    }
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return download_fail_or_archive(
+                ctx,
+                file_id,
+                read_ct,
+                msg_id,
+                &format!("failed to read response body: {e}"),
+            )
+            .await;
+        }
+    };
 
     // Persist the bytes before acknowledging anything: the enrich and scan
     // stages read the file from disk by file id. Write to a temp path and
     // rename so a crash never leaves a half-written file behind.
-    let dir = PathBuf::from(storage_root);
+    let dir = PathBuf::from(ctx.storage_root);
     let path = dir.join(file_id.to_string());
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|e| format!("failed to create storage dir: {e}"))?;
+    if let Err(error) = tokio::fs::create_dir_all(&dir).await {
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to create storage dir: {error}"),
+        )
+        .await;
+    }
     let tmp = path.with_extension("tmp");
-    tokio::fs::write(&tmp, &bytes)
-        .await
-        .map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
-    tokio::fs::rename(&tmp, &path)
-        .await
-        .map_err(|e| format!("failed to persist {}: {e}", path.display()))?;
+    if let Err(error) = tokio::fs::write(&tmp, &bytes).await {
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to write {}: {error}", tmp.display()),
+        )
+        .await;
+    }
+    if let Err(error) = tokio::fs::rename(&tmp, &path).await {
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to persist {}: {error}", path.display()),
+        )
+        .await;
+    }
 
     let sha256 = hex::encode(sha2::Sha256::digest(&bytes));
-    Files::mark_downloaded(file_id, sha256, bytes.len() as i64, database)
-        .await
-        .map_err(|e| format!("failed to backfill metadata: {e}"))?;
+    if let Err(error) =
+        Files::mark_downloaded(file_id, sha256, bytes.len() as i64, ctx.database).await
+    {
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to backfill metadata: {error}"),
+        )
+        .await;
+    }
 
     // Enrich and scan run in parallel: both only read the persisted bytes and
-    // fail independently.
-    pgmq.send(enrich_queue, &ScanTask { file_id })
-        .await
-        .map_err(|e| format!("failed to enqueue enrich task: {e}"))?;
-    pgmq.send(scan_queue, &ScanTask { file_id })
-        .await
-        .map_err(|e| format!("failed to enqueue scan task: {e}"))?;
+    // fail independently. Once the bytes are persisted and metadata is
+    // backfilled the download stage is done; a fan-out failure is retried as
+    // a whole (the idempotent write would just re-run).
+    if let Err(error) = pgmq_send(ctx, enrich_queue, file_id).await {
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to enqueue enrich task: {error}"),
+        )
+        .await;
+    }
+    if let Err(error) = pgmq_send(ctx, scan_queue, file_id).await {
+        return download_fail_or_archive(
+            ctx,
+            file_id,
+            read_ct,
+            msg_id,
+            &format!("failed to enqueue scan task: {error}"),
+        )
+        .await;
+    }
 
     info!(%file_id, size = bytes.len(), "file downloaded, enrich and scan tasks enqueued");
 
     Ok(())
 }
 
+/// Sends a scan task into `queue` via the stage's pgmq client.
+async fn pgmq_send(ctx: &StageCtx<'_>, queue: &str, file_id: Uuid) -> Result<(), String> {
+    ctx.pgmq
+        .send(queue, &ScanTask { file_id })
+        .await
+        .map_err(|e| format!("failed to enqueue task: {e}"))?;
+    Ok(())
+}
+
+/// Download failure handler: retry until `max_read_ct`, then mark the file
+/// permanently failed and archive the message.
+async fn download_fail_or_archive(
+    ctx: &StageCtx<'_>,
+    file_id: Uuid,
+    read_ct: u32,
+    msg_id: i64,
+    error: &str,
+) -> Result<(), String> {
+    if !should_give_up(read_ct, ctx.max_read_ct) {
+        return Err(error.to_owned());
+    }
+
+    warn!(%file_id, read_ct, max_read_ct = ctx.max_read_ct, %error, "download failed permanently, marking file as failed");
+    if let Err(e) = Files::mark_failed(file_id, error, ctx.database).await {
+        warn!(%file_id, %e, "failed to record download failure");
+    }
+    archive_message(ctx, msg_id, file_id).await
+}
+
+/// Moves a message out of its queue into the pgmq archive table.
+async fn archive_message(ctx: &StageCtx<'_>, msg_id: i64, file_id: Uuid) -> Result<(), String> {
+    ctx.pgmq
+        .archive(ctx.queue_name, msg_id)
+        .await
+        .map_err(|e| format!("failed to archive message: {e}"))?;
+    info!(%file_id, queue = %ctx.queue_name, "message archived");
+    Ok(())
+}
+
 /// Enrich stage: sniff the file type from the stored bytes and backfill the
 /// mime type. Runs in parallel with the scan stage and never touches the
 /// status, so a sniff failure (or an unknown type) does not block scanning.
+///
+/// A missing file with the row still in a non-terminal state is retried
+/// until `max_read_ct`, then the message is archived: enrichment is
+/// best-effort and a missing mime type is acceptable (it must not mark the
+/// file failed — that terminal state belongs to the scan stage).
 async fn process_enrich(
-    database: &DatabaseConnection,
-    storage_root: &str,
+    ctx: &StageCtx<'_>,
     file_id: Uuid,
+    read_ct: u32,
+    msg_id: i64,
 ) -> Result<(), String> {
-    let path = PathBuf::from(storage_root).join(file_id.to_string());
+    let path = PathBuf::from(ctx.storage_root).join(file_id.to_string());
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(error) if !path.exists() => {
             // The scan stage removes the bytes once its verdict is persisted;
             // if the file is already gone the scan reached a terminal state
             // (completed or permanently failed) and there is nothing left to
-            // sniff. Anything else is a real error.
-            let model = Files::find_by_id(file_id, database)
+            // sniff.
+            let model = Files::find_by_id(file_id, ctx.database)
                 .await
                 .map_err(|e| format!("failed to look up file {file_id}: {e}"))?;
             if model.is_some_and(|m| matches!(m.status, FileStatus::Completed | FileStatus::Failed))
             {
                 info!(%file_id, "file scan already finished, skipping enrichment");
                 return Ok(());
+            }
+            if should_give_up(read_ct, ctx.max_read_ct) {
+                warn!(%file_id, read_ct, max_read_ct = ctx.max_read_ct, "file bytes missing and never finalized, archiving enrich task");
+                return archive_message(ctx, msg_id, file_id).await;
             }
             return Err(format!("failed to read {}: {error}", path.display()));
         }
@@ -488,7 +652,7 @@ async fn process_enrich(
 
     match infer::get(&bytes) {
         Some(info) => {
-            Files::mark_enriched(file_id, info.mime_type(), database)
+            Files::mark_enriched(file_id, info.mime_type(), ctx.database)
                 .await
                 .map_err(|e| format!("failed to backfill mime type: {e}"))?;
             info!(%file_id, mime = info.mime_type(), "file enriched");
