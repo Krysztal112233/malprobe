@@ -85,6 +85,20 @@ services:
       clamav:
         condition: service_started
 
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    image: ghcr.io/krysztal112233/malprobe-web:latest
+    restart: unless-stopped
+    ports:
+      # NGINX serves the built frontend and proxies /api -> malprobe:8000.
+      - 8080:80
+    depends_on:
+      malprobe:
+        condition: service_started
+
 volumes:
   postgres-data:
   file-storage:

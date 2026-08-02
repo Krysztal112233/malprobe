@@ -59,3 +59,21 @@ ENTRYPOINT ["/init"]
 
 HEALTHCHECK --interval=1m --timeout=30s --start-period=6m --retries=3 \
     CMD ["/usr/local/bin/clamdcheck.sh"]
+
+# Build the Vue frontend inside the web/ directory.
+FROM docker.io/library/node:22-alpine AS web-builder
+WORKDIR /app
+COPY . .
+WORKDIR /app/web
+# API origin baked into the bundle; the containerised NGINX expects /api,
+# which it proxies to the malprobe service (see web/nginx.conf).
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN npm install -g pnpm@11 && \
+    pnpm install --frozen-lockfile && \
+    pnpm build
+
+# Serve the built frontend with NGINX and proxy /api -> malprobe:8000.
+FROM docker.io/library/nginx:alpine AS web
+COPY web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=web-builder /app/web/dist /usr/share/nginx/html

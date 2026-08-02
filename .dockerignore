@@ -1,2 +1,4 @@
 /target
-
+# Web build deps/artifacts (would bloat the web-builder stage if copied)
+/web/node_modules
+/web/dist
