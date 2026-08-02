@@ -47,7 +47,31 @@ FROM ghcr.io/extremeshok/clamav-unofficial-sigs:latest AS clamav
 RUN freshclam --foreground --stdout && \
     rm -f /var/lib/clamav/freshclam.dat /var/lib/clamav/mirrors.dat
 
-RUN printf '%s\n' \
+# clamav-unofficial-sigs downloads the Sanesecurity public key and imports it
+# into a custom keyring. The script treats any HTTP 200 as a successful download,
+# so in some datacenters it writes an HTML error page instead of the real PGP key
+# and the subsequent gpg --import fails (flaky CI builds). Pre-seed the key and the
+# keyring here with content validation + retries; the script then skips its own
+# (unvalidated) download entirely.
+RUN mkdir -p /var/lib/clamav-unofficial-sigs/gpg-key && \
+    chmod 0700 /var/lib/clamav-unofficial-sigs/gpg-key && \
+    for i in $(seq 1 10); do \
+      curl -fsSL --compressed --retry 5 \
+        -o /var/lib/clamav-unofficial-sigs/gpg-key/publickey.gpg \
+        https://www.sanesecurity.com/publickey.gpg && \
+      grep -q '^-----BEGIN PGP PUBLIC KEY BLOCK-----' \
+        /var/lib/clamav-unofficial-sigs/gpg-key/publickey.gpg \
+      && break; \
+      echo "key fetch attempt $i/10 did not return a valid PGP key, retrying"; \
+      sleep 10; \
+    done && \
+    grep -q '^-----BEGIN PGP PUBLIC KEY BLOCK-----' \
+      /var/lib/clamav-unofficial-sigs/gpg-key/publickey.gpg && \
+    gpg -q --no-options --no-default-keyring \
+      --homedir /var/lib/clamav-unofficial-sigs/gpg-key \
+      --keyring /var/lib/clamav-unofficial-sigs/gpg-key/ss-keyring.gpg \
+      --import /var/lib/clamav-unofficial-sigs/gpg-key/publickey.gpg && \
+    printf '%s\n' \
         'user_configuration_complete="yes"' \
         'enable_random="no"' \
     > /etc/clamav-unofficial-sigs/user.conf && \
