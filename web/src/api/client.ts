@@ -15,8 +15,20 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * API origin, injected at build time via VITE_API_BASE_URL (e.g.
+ * "http://192.168.1.10:8000", no trailing slash). Empty string = same
+ * origin (dev-server proxy or a production reverse proxy handles routing).
+ * Note: a cross-origin base URL requires CORS on the backend
+ * (`cors.allow_origins` in malprobe.toml).
+ */
+const BASE: string = (import.meta.env.VITE_API_BASE_URL ?? "").replace(
+  /\/+$/,
+  "",
+);
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
   });
