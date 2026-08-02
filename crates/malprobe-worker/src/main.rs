@@ -60,8 +60,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let database = database.clone();
         let queue_name = cfg.queue_name.clone();
         let storage_root = cfg.storage_root.clone();
-        let clamd_addr = cfg.clamd_addr.clone();
-        let clamd_timeout = Duration::from_secs(cfg.clamd_timeout_seconds);
+        let clamd_addr = cfg.clamav.clamd_addr.clone();
+        let clamd_timeout = Duration::from_secs(cfg.clamav.clamd_timeout_seconds);
         let max_read_ct = cfg.max_read_ct;
         let mut shutdown = shutdown_rx.clone();
         handles.push(tokio::spawn(async move {

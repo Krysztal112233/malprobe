@@ -5,6 +5,7 @@
 //! `MALPROBE_*` environment overrides.
 
 mod backend;
+mod clamav;
 mod database;
 mod worker;
 
@@ -12,6 +13,7 @@ use config::Config;
 use serde::de::DeserializeOwned;
 
 pub use backend::BackendConfig;
+pub use clamav::ClamavConfig;
 pub use database::DatabaseConfig;
 pub use worker::{WorkerConfig, WorkerSection};
 
@@ -21,6 +23,7 @@ pub use worker::{WorkerConfig, WorkerSection};
 /// Environment keys use a double underscore between nesting levels so that
 /// single underscores inside field names survive the mapping, e.g.
 /// `MALPROBE__DATABASE__DSN` → `database.dsn`,
+/// `MALPROBE__WORKER__CLAMAV__CLAMD_ADDR` → `worker.clamav.clamd_addr`,
 /// `MALPROBE__WORKER__VT_SECONDS` → `worker.vt_seconds` and
 /// `MALPROBE__ADDR` → `addr` (top-level field).
 pub(crate) fn load<T>() -> Result<T, config::ConfigError>
@@ -47,7 +50,10 @@ mod tests {
         env.insert("MALPROBE__ADDR".into(), "9.9.9.9:9000".into());
         env.insert("MALPROBE__DATABASE__DSN".into(), "postgresql://x".into());
         env.insert("MALPROBE__WORKER__VT_SECONDS".into(), "5".into());
-        env.insert("MALPROBE__WORKER__CLAMD_ADDR".into(), "1.2.3.4:99".into());
+        env.insert(
+            "MALPROBE__WORKER__CLAMAV__CLAMD_ADDR".into(),
+            "1.2.3.4:99".into(),
+        );
 
         let config: WorkerConfig = Config::builder()
             .add_source(
@@ -62,7 +68,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.worker.vt_seconds, 5);
-        assert_eq!(config.worker.clamd_addr, "1.2.3.4:99");
+        assert_eq!(config.worker.clamav.clamd_addr, "1.2.3.4:99");
         assert_eq!(config.database.dsn, "postgresql://x");
     }
 
