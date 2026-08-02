@@ -3,3 +3,6 @@
 .pi-subagents/
 # Worker storage: downloaded file bytes, keyed by file id
 /storage
+# Frontend
+web/node_modules
+web/dist

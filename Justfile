@@ -1,6 +1,7 @@
-# Format the entire workspace
+# Format the entire workspace (Rust crates + web frontend)
 fmt:
     cargo fmt --all
+    pnpm --dir web run format
 
 # Regenerate SeaORM entities from the database schema
 # (requires DATABASE_URL pointing to a migrated database)
